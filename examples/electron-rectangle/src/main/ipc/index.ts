@@ -1,0 +1,1 @@
+export { IpcRouter } from "./IpcRouter";

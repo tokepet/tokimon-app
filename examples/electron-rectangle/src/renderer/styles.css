@@ -1,0 +1,25 @@
+/* 투명 윈도우의 body 배경은 transparent여야 한다. */
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Electron 윈도우 드래그용 CSS hint */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+/* 도형 자체는 클릭 가능하게 drag 영역에서 제외 */
+.drag-region > * {
+  -webkit-app-region: no-drag;
+}

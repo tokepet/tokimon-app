@@ -1,0 +1,16 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  isolation: isolate;
+  backface-visibility: hidden;
+  background: rgba(0, 0, 0, 0.01);
+}

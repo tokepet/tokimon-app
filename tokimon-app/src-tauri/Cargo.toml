@@ -1,0 +1,21 @@
+[package]
+name = "tokimon-app"
+version = "0.1.0"
+description = "TokiMon — AI 토큰 반응형 데스크탑 펫"
+authors = ["TokiMon"]
+edition = "2021"
+rust-version = "1.75"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# macos-private-api: macOS에서 transparent 윈도우 메서드를 노출하기 위해 필수.
+# 이 feature 없이 .transparent(true)를 호출하면 E0599로 컴파일 실패.
+tauri = { version = "2", features = ["macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
