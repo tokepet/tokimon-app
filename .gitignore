@@ -24,3 +24,7 @@ dist-ssr/
 .vscode/
 .idea/
 *.swp
+
+# Claude Code
+CLAUDE.md
+**/CLAUDE.md

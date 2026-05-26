@@ -1,24 +1,27 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
-mod window;
+mod tray;
 
 use commands::window_control;
-use window::TransparentWindow;
+use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            window_control::close,
-            window_control::minimize,
+            window_control::hide_to_tray,
+            window_control::set_tray_icon,
         ])
         .setup(|app| {
-            TransparentWindow::new("main", "TokiMon")
-                .with_size(240.0, 80.0)
-                .with_transparent(true)
-                .with_always_on_top(true)
-                .with_decorations(false)
-                .build(app)?;
+            // 펫 선택 팝업: 화면 중앙, macOS 기본 데코레이션, 고정 크기
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("TokiMon")
+                .inner_size(640.0, 460.0)
+                .center()
+                .resizable(false)
+                .build()?;
+
+            tray::create_tray(app)?;
             Ok(())
         })
         .run(tauri::generate_context!())

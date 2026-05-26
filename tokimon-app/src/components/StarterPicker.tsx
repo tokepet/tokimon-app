@@ -1,68 +1,43 @@
+import { useState } from "react";
 import { PetView } from "./PetView";
 import { PETS } from "../domain/petCatalog";
-import { SHAPE_PX, WINDOW_H, WINDOW_W, type Point } from "../motion/randomTarget";
 
 type Props = {
-  onPick: (petId: string, startAt: Point) => void;
+  onPick: (petId: string) => void;
 };
 
-const SLOT_COUNT = 3;
-const SLOT_W = WINDOW_W / SLOT_COUNT;
-const SHAPE_Y = (WINDOW_H - SHAPE_PX) / 2;
-
 export function StarterPicker({ onPick }: Props) {
-  return (
-    <>
-      {Array.from({ length: SLOT_COUNT }).map((_, i) => {
-        const pet = PETS[i];
-        const x = i * SLOT_W + (SLOT_W - SHAPE_PX) / 2;
-        return (
-          <div
-            key={i}
-            style={{
-              position: "absolute",
-              left: x,
-              top: SHAPE_Y,
-              width: SHAPE_PX,
-              height: SHAPE_PX,
-              zIndex: 1,
-            }}
-          >
-            {pet ? (
-              <PetView
-                pet={pet}
-                size={SHAPE_PX}
-                onClick={() => onPick(pet.id, { x, y: SHAPE_Y })}
-              />
-            ) : (
-              <ComingSoonSlot />
-            )}
-          </div>
-        );
-      })}
-    </>
-  );
-}
+  const [hovered, setHovered] = useState<string | null>(null);
 
-function ComingSoonSlot() {
   return (
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        border: "1px dashed rgba(255,255,255,0.35)",
-        borderRadius: 8,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "rgba(255,255,255,0.55)",
-        fontSize: 10,
-        fontFamily: "system-ui, sans-serif",
-        textAlign: "center",
-        lineHeight: 1.2,
-      }}
-    >
-      Coming<br />Soon
+    <div className="selection-root">
+      <header className="selection-header">
+        <h1>토키몬을 선택해주세요</h1>
+        <p>앞으로 함께할 첫 번째 펫을 골라주세요</p>
+      </header>
+
+      <div className="pet-grid">
+        {PETS.map((pet) => (
+          <button
+            key={pet.id}
+            type="button"
+            className={`pet-card ${hovered === pet.id ? "is-hovered" : ""}`}
+            onMouseEnter={() => setHovered(pet.id)}
+            onMouseLeave={() => setHovered((curr) => (curr === pet.id ? null : curr))}
+            onClick={() => onPick(pet.id)}
+          >
+            <div className="pet-card__sprite">
+              <PetView pet={pet} size={120} />
+            </div>
+            <div className="pet-card__name">{pet.name}</div>
+            <div className="pet-card__desc">{pet.description}</div>
+          </button>
+        ))}
+      </div>
+
+      <footer className="selection-footer">
+        선택한 펫은 메뉴바 아이콘에서 다시 변경할 수 있습니다
+      </footer>
     </div>
   );
 }
