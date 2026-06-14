@@ -1,27 +1,75 @@
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { StarterPicker } from "../components/StarterPicker";
+import { Wanderer } from "../components/Wanderer";
+import { loadActivePetLock, lockStarterPet } from "../domain/localProfile";
 import { findPet, type PetSpriteDef } from "../domain/petCatalog";
+import type { Point } from "../motion/randomTarget";
 
 // macOS 메뉴바는 약 22pt에서 그려지지만 Retina를 고려해 2x인 64px로 보낸다.
 // OS가 표시 크기로 자동 다운스케일한다.
 const TRAY_PX = 64;
 
-export function App() {
-  const handlePick = async (petId: string) => {
-    // 선택한 종을 백엔드에 저장해 성장 로직이 같은 펫을 키우도록 한다.
-    try {
-      await invoke("select_starter", { species: petId });
-    } catch (err) {
-      console.error("스타터 저장 실패", err);
-    }
+type AppState =
+  | { phase: "selection" }
+  | { phase: "wandering"; petId: string; startAt?: Point };
 
-    const pet = findPet(petId);
-    const sprite = pet?.states.idle;
-    if (!sprite) {
-      await invoke("hide_to_tray");
+export function App() {
+  const [state, setState] = useState<AppState>(() => getInitialState());
+
+  useEffect(() => {
+    if (state.phase === "selection") {
+      void enterSelectionMode();
       return;
     }
 
+    void syncPetShell(state.petId);
+  }, [state]);
+
+  const handlePick = async (petId: string) => {
+    const lockedPet = lockStarterPet(petId);
+    if (!findPet(lockedPet.speciesId)) {
+      console.error("저장된 스타터를 찾을 수 없습니다", lockedPet);
+      return;
+    }
+
+    setState({ phase: "wandering", petId: lockedPet.speciesId });
+  };
+
+  return (
+    <>
+      {state.phase === "wandering" ? (
+        <div
+          data-tauri-drag-region
+          style={{ position: "absolute", inset: 0, zIndex: 0 }}
+        />
+      ) : null}
+
+      {state.phase === "selection" ? (
+        <StarterPicker onPick={handlePick} />
+      ) : (
+        <Wanderer petId={state.petId} startAt={state.startAt} />
+      )}
+    </>
+  );
+}
+
+function getInitialState(): AppState {
+  const lockedPet = loadActivePetLock();
+  if (lockedPet && findPet(lockedPet.speciesId)) {
+    return { phase: "wandering", petId: lockedPet.speciesId };
+  }
+
+  return { phase: "selection" };
+}
+
+async function syncPetShell(petId: string) {
+  await syncStarterWithBackend(petId);
+
+  const pet = findPet(petId);
+  const sprite = pet?.states.idle;
+
+  if (sprite) {
     try {
       const rgba = await renderTrayRgba(sprite);
       await invoke("set_tray_icon", {
@@ -32,11 +80,34 @@ export function App() {
     } catch (err) {
       console.error("트레이 아이콘 설정 실패", err);
     }
+  }
 
-    await invoke("hide_to_tray");
-  };
+  await enterPetMode();
+}
 
-  return <StarterPicker onPick={handlePick} />;
+async function syncStarterWithBackend(petId: string) {
+  // 선택한 종을 백엔드에 저장해 성장 로직이 같은 펫을 키우도록 한다.
+  try {
+    await invoke("select_starter", { species: petId });
+  } catch (err) {
+    console.error("스타터 저장 실패", err);
+  }
+}
+
+async function enterPetMode() {
+  try {
+    await invoke("enter_pet_mode");
+  } catch (err) {
+    console.error("펫 창 전환 실패", err);
+  }
+}
+
+async function enterSelectionMode() {
+  try {
+    await invoke("enter_selection_mode");
+  } catch (err) {
+    console.error("선택 창 전환 실패", err);
+  }
 }
 
 async function renderTrayRgba(sprite: PetSpriteDef): Promise<Uint8ClampedArray> {

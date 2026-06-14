@@ -7,6 +7,7 @@ type Props = {
   frameHeight: number;
   fps: number;
   displaySize: number;
+  animate?: boolean;
   pixelated?: boolean;
 };
 
@@ -17,18 +18,23 @@ export function SpriteSheet({
   frameHeight,
   fps,
   displaySize,
+  animate = true,
   pixelated = true,
 }: Props) {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
-    if (frameCount <= 1) return;
+    if (!animate || frameCount <= 1) {
+      setFrame(0);
+      return;
+    }
+
     const id = window.setInterval(
       () => setFrame((f) => (f + 1) % frameCount),
       1000 / fps,
     );
     return () => window.clearInterval(id);
-  }, [frameCount, fps]);
+  }, [animate, frameCount, fps]);
 
   const aspect = frameWidth / frameHeight;
   const frameDisplayH = aspect >= 1 ? displaySize / aspect : displaySize;

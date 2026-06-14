@@ -8,11 +8,16 @@ use tauri::{
 };
 
 pub fn create_tray(app: &mut App) -> tauri::Result<()> {
-    let show_item = MenuItem::with_id(app, "show", "펫 선택 열기", true, None::<&str>)?;
+    let show_item = MenuItem::with_id(app, "show", "창 열기", true, None::<&str>)?;
+    let reset_starter_item =
+        MenuItem::with_id(app, "reset-starter", "스타팅 초기화", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app.handle())?;
 
-    let menu = Menu::with_items(app, &[&show_item, &separator, &quit_item])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show_item, &reset_starter_item, &separator, &quit_item],
+    )?;
 
     let icon = app
         .default_window_icon()
@@ -26,6 +31,15 @@ pub fn create_tray(app: &mut App) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            "reset-starter" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.eval(
+                        "window.localStorage.removeItem('tokimon.localProfile.v1'); window.location.reload();",
+                    );
                     let _ = window.show();
                     let _ = window.set_focus();
                 }

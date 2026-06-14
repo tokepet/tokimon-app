@@ -77,6 +77,8 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             window_control::hide_to_tray,
+            window_control::enter_selection_mode,
+            window_control::enter_pet_mode,
             window_control::set_tray_icon,
             dashboard_snapshot,
             current_pet,
@@ -85,12 +87,15 @@ fn main() {
         ])
         .setup(|app| {
             // 펫 선택 팝업: 화면 중앙, macOS 기본 데코레이션, 고정 크기
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("TokiMon")
                 .inner_size(640.0, 460.0)
+                .transparent(true)
                 .center()
                 .resizable(false)
                 .build()?;
+            window.show()?;
+            window.set_focus()?;
 
             tray::create_tray(app)?;
 

@@ -6,13 +6,16 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo",
     "Helvetica Neue", Arial, sans-serif;
   color: #f5f5f7;
-  background: #1c1c1e;
+  background: transparent;
 }
 
 #root {
   width: 100vw;
   height: 100vh;
   position: relative;
+  isolation: isolate;
+  backface-visibility: hidden;
+  background: transparent;
 }
 
 .selection-root {
@@ -83,6 +86,22 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.pet-card__sprite-breathe {
+  animation: sprite-breathe 1.4s ease-in-out infinite;
+  transform-origin: 50% 82%;
+}
+
+@keyframes sprite-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+
+  50% {
+    transform: translateY(-2px) scaleY(1.035);
+  }
 }
 
 .pet-card__name {

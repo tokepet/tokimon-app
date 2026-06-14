@@ -27,7 +27,9 @@ export function StarterPicker({ onPick }: Props) {
             onClick={() => onPick(pet.id)}
           >
             <div className="pet-card__sprite">
-              <PetView pet={pet} size={120} />
+              <div className={pet.id === "dragon-mint" ? "pet-card__sprite-breathe" : undefined}>
+                <PetView pet={pet} size={120} animate={pet.id !== "dragon-mint"} />
+              </div>
             </div>
             <div className="pet-card__name">{pet.name}</div>
             <div className="pet-card__desc">{pet.description}</div>

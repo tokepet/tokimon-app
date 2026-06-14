@@ -10,9 +10,9 @@ rust-version = "1.75"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# tray-icon: 메뉴바/시스템 트레이 아이콘. 펫 선택 후 메인 윈도우는 hide되고
-# 트레이만 남는 구조라 필수.
-tauri = { version = "2", features = ["tray-icon"] }
+# tray-icon: 메뉴바/시스템 트레이 아이콘.
+# macos-private-api: macOS에서 펫 창 배경을 투명하게 만들 때 필요.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 토큰 수집기. 로컬 sibling 체크아웃을 가리키는 path 의존성.
