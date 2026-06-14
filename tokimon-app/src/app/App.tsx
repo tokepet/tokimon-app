@@ -8,6 +8,13 @@ const TRAY_PX = 64;
 
 export function App() {
   const handlePick = async (petId: string) => {
+    // 선택한 종을 백엔드에 저장해 성장 로직이 같은 펫을 키우도록 한다.
+    try {
+      await invoke("select_starter", { species: petId });
+    } catch (err) {
+      console.error("스타터 저장 실패", err);
+    }
+
     const pet = findPet(petId);
     const sprite = pet?.states.idle;
     if (!sprite) {

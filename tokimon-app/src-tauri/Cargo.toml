@@ -15,6 +15,14 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 토큰 수집기. 로컬 sibling 체크아웃을 가리키는 path 의존성.
+# (배포 시에는 git 의존성으로 교체 가능: { git = "https://github.com/tokepet/tokimon-rust-be.git" })
+tokepet-collector = { path = "../../../tokepet-collector" }
+# 수집기가 적재한 usage_events를 읽고 pet_state를 저장하기 위한 SQLite 접근.
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
 
 [features]
 default = ["custom-protocol"]
