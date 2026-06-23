@@ -18,6 +18,63 @@ body {
   background: transparent;
 }
 
+.token-collection-panel {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  width: 218px;
+  height: 24px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(28, 28, 30, 0.74);
+  color: #f5f5f7;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+  font-size: 10px;
+  line-height: 1;
+  pointer-events: auto;
+  user-select: none;
+  backdrop-filter: blur(8px);
+}
+
+.token-collection-panel__dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #8e8e93;
+  box-shadow: 0 0 0 2px rgba(142, 142, 147, 0.18);
+}
+
+.token-collection-panel__dot.is-active {
+  background: #35c759;
+  box-shadow: 0 0 0 2px rgba(53, 199, 89, 0.18);
+}
+
+.token-collection-panel__status,
+.token-collection-panel__meta {
+  flex: 0 0 auto;
+  color: rgba(245, 245, 247, 0.72);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.token-collection-panel strong {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .selection-root {
   width: 100%;
   height: 100%;

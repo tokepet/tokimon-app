@@ -1,23 +1,25 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod collector;
 mod commands;
 mod growth;
 mod tray;
 
-use std::time::Duration;
+use std::{sync::Mutex, time::Duration};
 
+use collector::{Collector, CollectorSnapshot, CollectorWatch, PollSummary, WatchOptions};
 use commands::window_control;
 use growth::{PetState, StarterSpecies};
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
-use tokepet_collector::{Collector, CollectorSnapshot, PollSummary};
 
 /// Shared runtime state: the embedded token collector. The growth tables live
 /// in the same SQLite file (`collector.db_path()`), so commands open a fresh
 /// connection to it as needed.
 struct AppState {
     collector: Collector,
+    _watcher: Mutex<Option<CollectorWatch>>,
 }
 
 impl AppState {
@@ -34,6 +36,18 @@ struct DashboardSnapshot {
     pet: PetState,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TokenUsageSnapshot {
+    event_count: i64,
+    input_tokens: i64,
+    reasoning_tokens: i64,
+    thoughts_tokens: i64,
+    tool_tokens: i64,
+    total_tokens: i64,
+    last_event_at: Option<String>,
+}
+
 #[tauri::command]
 fn dashboard_snapshot(state: State<'_, AppState>) -> Result<DashboardSnapshot, String> {
     let collector = state.collector.snapshot()?;
@@ -46,6 +60,35 @@ fn dashboard_snapshot(state: State<'_, AppState>) -> Result<DashboardSnapshot, S
 fn current_pet(state: State<'_, AppState>) -> Result<PetState, String> {
     let conn = state.connection()?;
     growth::load_pet(&conn)
+}
+
+#[tauri::command]
+fn token_usage(state: State<'_, AppState>) -> Result<TokenUsageSnapshot, String> {
+    let conn = state.connection()?;
+    conn.query_row(
+        "SELECT
+            COUNT(*),
+            COALESCE(SUM(input_tokens), 0),
+            COALESCE(SUM(reasoning_tokens), 0),
+            COALESCE(SUM(thoughts_tokens), 0),
+            COALESCE(SUM(tool_tokens), 0),
+            COALESCE(SUM(total_tokens), 0),
+            MAX(timestamp)
+         FROM usage_events",
+        [],
+        |row| {
+            Ok(TokenUsageSnapshot {
+                event_count: row.get(0)?,
+                input_tokens: row.get(1)?,
+                reasoning_tokens: row.get(2)?,
+                thoughts_tokens: row.get(3)?,
+                tool_tokens: row.get(4)?,
+                total_tokens: row.get(5)?,
+                last_event_at: row.get(6)?,
+            })
+        },
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -64,13 +107,22 @@ fn select_starter(
 /// Manual one-shot poll: collect from all sources, then feed the pet.
 #[tauri::command]
 fn poll_now(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PollSummary, String> {
-    let summary = state.collector.poll_all_once()?;
-    let conn = state.connection()?;
+    poll_and_feed(&app, &state.collector)
+}
+
+fn poll_and_feed(app: &tauri::AppHandle, collector: &Collector) -> Result<PollSummary, String> {
+    let summary = collector.poll_all_once()?;
+    feed_new_usage(app, collector)?;
+    Ok(summary)
+}
+
+fn feed_new_usage(app: &tauri::AppHandle, collector: &Collector) -> Result<(), String> {
+    let conn = Connection::open(collector.db_path()).map_err(|error| error.to_string())?;
     let (fed, _) = growth::process_new_usage(&conn)?;
     if fed > 0 {
         let _ = app.emit("pet:fed", fed);
     }
-    Ok(summary)
+    Ok(())
 }
 
 fn main() {
@@ -82,18 +134,20 @@ fn main() {
             window_control::set_tray_icon,
             dashboard_snapshot,
             current_pet,
+            token_usage,
             select_starter,
             poll_now,
         ])
         .setup(|app| {
             // 펫 선택 팝업: 화면 중앙, macOS 기본 데코레이션, 고정 크기
-            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("TokiMon")
-                .inner_size(640.0, 460.0)
-                .transparent(true)
-                .center()
-                .resizable(false)
-                .build()?;
+            let window =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title("TokiMon")
+                    .inner_size(640.0, 460.0)
+                    .transparent(true)
+                    .center()
+                    .resizable(false)
+                    .build()?;
             window.show()?;
             window.set_focus()?;
 
@@ -113,24 +167,30 @@ fn main() {
                 growth::apply_migrations(&conn).map_err(|error| error.to_string())?;
             }
 
-            // 5초마다: 모든 소스 폴링 → 신규 usage_events를 펫 성장으로 변환 → pet:fed emit.
-            let poll_collector = collector.clone();
-            let poll_app = app.handle().clone();
-            std::thread::spawn(move || loop {
-                std::thread::sleep(Duration::from_secs(5));
-                if poll_collector.poll_all_once().is_err() {
-                    continue;
-                }
-                if let Ok(conn) = Connection::open(poll_collector.db_path()) {
-                    if let Ok((fed, _)) = growth::process_new_usage(&conn) {
-                        if fed > 0 {
-                            let _ = poll_app.emit("pet:fed", fed);
+            // 파일 변경 이벤트 기반 수집: 300ms debounce + 30초 안전망 poll.
+            let watch_collector = collector.clone();
+            let watch_app = app.handle().clone();
+            let watcher = collector
+                .watch(
+                    WatchOptions {
+                        debounce: Duration::from_millis(300),
+                        backup_poll: Duration::from_secs(30),
+                    },
+                    move |poll_result| match poll_result {
+                        Ok(_) => {
+                            if let Err(error) = feed_new_usage(&watch_app, &watch_collector) {
+                                eprintln!("failed to feed pet from token usage: {error}");
+                            }
                         }
-                    }
-                }
-            });
+                        Err(error) => eprintln!("failed to collect token usage: {error}"),
+                    },
+                )
+                .map_err(|error| error.to_string())?;
 
-            app.manage(AppState { collector });
+            app.manage(AppState {
+                collector,
+                _watcher: Mutex::new(Some(watcher)),
+            });
             Ok(())
         })
         .run(tauri::generate_context!())

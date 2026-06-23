@@ -9,6 +9,7 @@ type Props = {
   displaySize: number;
   animate?: boolean;
   pixelated?: boolean;
+  flipX?: boolean;
 };
 
 export function SpriteSheet({
@@ -20,21 +21,28 @@ export function SpriteSheet({
   displaySize,
   animate = true,
   pixelated = true,
+  flipX = false,
 }: Props) {
   const [frame, setFrame] = useState(0);
+  const safeFrameCount = Math.max(1, Math.floor(frameCount));
+  const safeFps = Math.max(0.1, fps);
 
   useEffect(() => {
-    if (!animate || frameCount <= 1) {
+    setFrame(0);
+  }, [src, frameWidth, frameHeight, safeFrameCount]);
+
+  useEffect(() => {
+    if (!animate || safeFrameCount <= 1) {
       setFrame(0);
       return;
     }
 
     const id = window.setInterval(
-      () => setFrame((f) => (f + 1) % frameCount),
-      1000 / fps,
+      () => setFrame((f) => (f + 1) % safeFrameCount),
+      1000 / safeFps,
     );
     return () => window.clearInterval(id);
-  }, [animate, frameCount, fps]);
+  }, [animate, safeFrameCount, safeFps]);
 
   const aspect = frameWidth / frameHeight;
   const frameDisplayH = aspect >= 1 ? displaySize / aspect : displaySize;
@@ -42,7 +50,8 @@ export function SpriteSheet({
   const offsetX = (displaySize - frameDisplayW) / 2;
   const offsetY = (displaySize - frameDisplayH) / 2;
   const scale = frameDisplayH / frameHeight;
-  const sheetDisplayW = frameWidth * frameCount * scale;
+  const sheetDisplayW = frameWidth * safeFrameCount * scale;
+  const visibleFrame = frame % safeFrameCount;
 
   return (
     <div
@@ -61,6 +70,8 @@ export function SpriteSheet({
           width: frameDisplayW,
           height: frameDisplayH,
           overflow: "hidden",
+          transform: flipX ? "scaleX(-1)" : "none",
+          transformOrigin: "center",
         }}
       >
         <img
@@ -73,7 +84,7 @@ export function SpriteSheet({
             position: "absolute",
             left: 0,
             top: 0,
-            transform: `translateX(${-frame * frameWidth * scale}px)`,
+            transform: `translateX(${-visibleFrame * frameWidth * scale}px)`,
             imageRendering: pixelated ? "pixelated" : "auto",
             display: "block",
             userSelect: "none",

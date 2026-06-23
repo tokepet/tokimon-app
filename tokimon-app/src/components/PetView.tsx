@@ -7,9 +7,17 @@ type Props = {
   size?: number;
   animate?: boolean;
   onClick?: () => void;
+  flipX?: boolean;
 };
 
-export function PetView({ pet, state = "idle", size, animate = true, onClick }: Props) {
+export function PetView({
+  pet,
+  state = "idle",
+  size,
+  animate = true,
+  onClick,
+  flipX = false,
+}: Props) {
   const sprite = pet.states[state] ?? pet.states.idle;
   if (!sprite) return null;
   const displaySize = size ?? pet.displaySize;
@@ -31,6 +39,7 @@ export function PetView({ pet, state = "idle", size, animate = true, onClick }: 
         fps={sprite.fps}
         displaySize={displaySize}
         animate={animate}
+        flipX={flipX}
       />
     </div>
   );

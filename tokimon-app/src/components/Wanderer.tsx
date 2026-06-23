@@ -1,21 +1,40 @@
 import { PetView } from "./PetView";
 import { findPet } from "../domain/petCatalog";
+import {
+  resolveTokimonBehaviorState,
+  resolveTokimonVisualState,
+  type TokimonPersistentState,
+  type TokimonReaction,
+} from "../domain/tokimonState";
 import { SHAPE_PX, type Point } from "../motion/randomTarget";
-import { useWander } from "../motion/useWander";
+import { useWander, WANDER_MOVE_MS } from "../motion/useWander";
 
 type Props = {
   petId: string;
   startAt?: Point;
+  petState?: TokimonPersistentState | null;
+  reaction?: TokimonReaction | null;
+  onInteract?: () => void;
 };
 
-export function Wanderer({ petId, startAt }: Props) {
+export function Wanderer({
+  petId,
+  startAt,
+  petState,
+  reaction,
+  onInteract,
+}: Props) {
   const { target, facing } = useWander(startAt);
   const pet = findPet(petId);
   if (!pet) return null;
 
-  // Sprite sheet labels are opposite to their visual facing direction.
-  const petState =
-    facing === "left" ? "walkRight" : facing === "right" ? "walkLeft" : "idle";
+  const behavior = resolveTokimonBehaviorState({
+    pet: petState,
+    facing,
+    reaction: reaction ?? null,
+  });
+  const visualState = resolveTokimonVisualState({ pet, behavior, facing });
+  const flipX = visualState === "walk" && facing === "left";
 
   return (
     <div
@@ -26,14 +45,20 @@ export function Wanderer({ petId, startAt }: Props) {
         width: SHAPE_PX,
         height: SHAPE_PX,
         transform: `translate3d(${target.x}px, ${target.y}px, 0)`,
-        transition: "transform 2s ease-in-out",
+        transition: `transform ${WANDER_MOVE_MS}ms ease-in-out`,
         willChange: "transform",
         backfaceVisibility: "hidden",
         contain: "layout paint",
         zIndex: 1,
       }}
     >
-      <PetView pet={pet} state={petState} size={SHAPE_PX} />
+      <PetView
+        pet={pet}
+        state={visualState}
+        size={SHAPE_PX}
+        onClick={onInteract}
+        flipX={flipX}
+      />
     </div>
   );
 }

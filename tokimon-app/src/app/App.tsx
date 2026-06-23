@@ -1,9 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { StarterPicker } from "../components/StarterPicker";
 import { Wanderer } from "../components/Wanderer";
 import { loadActivePetLock, lockStarterPet } from "../domain/localProfile";
 import { findPet, type PetSpriteDef } from "../domain/petCatalog";
+import {
+  TOKIMON_ATTACK_MS,
+  TOKIMON_BIG_TOKEN_THRESHOLD,
+  TOKIMON_FEEDING_MS,
+  TOKIMON_STRUGGLE_MS,
+  type TokimonPersistentState,
+  type TokimonReaction,
+} from "../domain/tokimonState";
 import type { Point } from "../motion/randomTarget";
 
 // macOS 메뉴바는 약 22pt에서 그려지지만 Retina를 고려해 2x인 64px로 보낸다.
@@ -14,8 +23,49 @@ type AppState =
   | { phase: "selection" }
   | { phase: "wandering"; petId: string; startAt?: Point };
 
+type TokenUsageSnapshot = {
+  eventCount: number;
+  inputTokens: number;
+  reasoningTokens: number;
+  thoughtsTokens: number;
+  toolTokens: number;
+  totalTokens: number;
+  lastEventAt: string | null;
+};
+
+type ProviderStats = {
+  eventsToday: number;
+  tokensToday: number;
+  lastEventAt: string | null;
+};
+
+type CollectorSnapshot = {
+  todayTokens: number;
+  status: string;
+  activeSourceCount: number;
+  claudeStats: ProviderStats;
+  geminiStats: ProviderStats;
+  codexStats: ProviderStats;
+};
+
+type DashboardSnapshot = {
+  collector: CollectorSnapshot;
+  pet: TokimonPersistentState;
+};
+
+type TokenCollectionPanelState = {
+  usage: TokenUsageSnapshot;
+  dashboard: DashboardSnapshot;
+};
+
+const TOKEN_FORMATTER = new Intl.NumberFormat("ko-KR");
+
 export function App() {
   const [state, setState] = useState<AppState>(() => getInitialState());
+  const [collectionState, setCollectionState] =
+    useState<TokenCollectionPanelState | null>(null);
+  const [reaction, setReaction] = useState<TokimonReaction | null>(null);
+  const lastCollectionStateRef = useRef<TokenCollectionPanelState | null>(null);
 
   useEffect(() => {
     if (state.phase === "selection") {
@@ -25,6 +75,58 @@ export function App() {
 
     void syncPetShell(state.petId);
   }, [state]);
+
+  useEffect(() => {
+    if (state.phase !== "wandering") {
+      setCollectionState(null);
+      setReaction(null);
+      lastCollectionStateRef.current = null;
+      return;
+    }
+
+    let disposed = false;
+    const refresh = async (reason?: "fed") => {
+      try {
+        const [usage, dashboard] = await Promise.all([
+          invoke<TokenUsageSnapshot>("token_usage"),
+          invoke<DashboardSnapshot>("dashboard_snapshot"),
+        ]);
+        if (disposed) return;
+
+        const nextState = { usage, dashboard };
+        const nextReaction = resolveReaction(
+          lastCollectionStateRef.current,
+          nextState,
+          reason,
+        );
+        lastCollectionStateRef.current = nextState;
+        if (nextReaction) setReaction(nextReaction);
+        setCollectionState(nextState);
+      } catch (err) {
+        console.error("토큰 수집 상태 조회 실패", err);
+      }
+    };
+
+    void refresh();
+    const timer = window.setInterval(refresh, 5000);
+    const unlisten = listen("pet:fed", () => void refresh("fed"));
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      void unlisten.then((off) => off());
+    };
+  }, [state.phase]);
+
+  useEffect(() => {
+    if (!reaction) return;
+
+    const timeout = window.setTimeout(
+      () => setReaction((current) => (current === reaction ? null : current)),
+      Math.max(0, reaction.until - Date.now()),
+    );
+    return () => window.clearTimeout(timeout);
+  }, [reaction]);
 
   const handlePick = async (petId: string) => {
     const lockedPet = lockStarterPet(petId);
@@ -36,6 +138,13 @@ export function App() {
     setState({ phase: "wandering", petId: lockedPet.speciesId });
   };
 
+  const handlePetInteract = () => {
+    setReaction({
+      state: "struggling",
+      until: Date.now() + TOKIMON_STRUGGLE_MS,
+    });
+  };
+
   return (
     <>
       {state.phase === "wandering" ? (
@@ -45,13 +154,114 @@ export function App() {
         />
       ) : null}
 
+      {state.phase === "wandering" ? (
+        <TokenCollectionPanel state={collectionState} />
+      ) : null}
+
       {state.phase === "selection" ? (
         <StarterPicker onPick={handlePick} />
       ) : (
-        <Wanderer petId={state.petId} startAt={state.startAt} />
+        <Wanderer
+          petId={state.petId}
+          startAt={state.startAt}
+          petState={collectionState?.dashboard.pet}
+          reaction={reaction}
+          onInteract={handlePetInteract}
+        />
       )}
     </>
   );
+}
+
+function resolveReaction(
+  previous: TokenCollectionPanelState | null,
+  next: TokenCollectionPanelState,
+  reason?: "fed",
+): TokimonReaction | null {
+  const now = Date.now();
+  if (!previous) {
+    return reason === "fed" ? { state: "feeding", until: now + TOKIMON_FEEDING_MS } : null;
+  }
+
+  const levelGained = next.dashboard.pet.level > previous.dashboard.pet.level;
+  const tokenDelta = next.usage.totalTokens - previous.usage.totalTokens;
+  const eventDelta = next.usage.eventCount - previous.usage.eventCount;
+
+  if (levelGained || tokenDelta >= TOKIMON_BIG_TOKEN_THRESHOLD) {
+    return { state: "attacking", until: now + TOKIMON_ATTACK_MS };
+  }
+
+  if (reason === "fed" || eventDelta > 0) {
+    return { state: "feeding", until: now + TOKIMON_FEEDING_MS };
+  }
+
+  return null;
+}
+
+function TokenCollectionPanel({
+  state,
+}: {
+  state: TokenCollectionPanelState | null;
+}) {
+  const usage = state?.usage;
+  const collector = state?.dashboard.collector;
+  const totalTokens = usage?.totalTokens ?? 0;
+  const todayTokens = collector?.todayTokens ?? 0;
+  const isCollecting = Boolean(
+    collector &&
+      collector.activeSourceCount > 0 &&
+      !collector.status.toLowerCase().includes("not found") &&
+      !collector.status.toLowerCase().includes("not configured"),
+  );
+
+  return (
+    <div
+      className="token-collection-panel"
+      title={collectionTitle(state)}
+    >
+      <span
+        className={
+          isCollecting
+            ? "token-collection-panel__dot is-active"
+            : "token-collection-panel__dot"
+        }
+      />
+      <span className="token-collection-panel__status">
+        {isCollecting ? "수집중" : state ? "대기" : "확인중"}
+      </span>
+      <strong>{formatCompact(todayTokens)}</strong>
+      <span className="token-collection-panel__meta">
+        총 {formatCompact(totalTokens)}
+      </span>
+      <span className="token-collection-panel__meta">
+        {TOKEN_FORMATTER.format(usage?.eventCount ?? 0)}건
+      </span>
+    </div>
+  );
+}
+
+function collectionTitle(state: TokenCollectionPanelState | null) {
+  if (!state) return "토큰 수집 상태를 불러오는 중";
+
+  const { usage, dashboard } = state;
+  const { collector } = dashboard;
+  return [
+    `상태: ${collector.status}`,
+    `오늘: ${TOKEN_FORMATTER.format(collector.todayTokens)} 토큰`,
+    `총합: ${TOKEN_FORMATTER.format(usage.totalTokens)} 토큰`,
+    `이벤트: ${TOKEN_FORMATTER.format(usage.eventCount)}건`,
+    `Claude 오늘: ${TOKEN_FORMATTER.format(collector.claudeStats.tokensToday)} 토큰`,
+    `Codex 오늘: ${TOKEN_FORMATTER.format(collector.codexStats.tokensToday)} 토큰`,
+    `Gemini 오늘: ${TOKEN_FORMATTER.format(collector.geminiStats.tokensToday)} 토큰`,
+    usage.lastEventAt ? `마지막 수집: ${usage.lastEventAt}` : "마지막 수집: 없음",
+  ].join("\n");
+}
+
+function formatCompact(value: number) {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return TOKEN_FORMATTER.format(value);
 }
 
 function getInitialState(): AppState {

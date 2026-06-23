@@ -1,84 +1,69 @@
 {
   "id": "coin-monkey",
   "name": "코인몽",
-  "description": "꼬리 끝이 토큰 코인인 장난꾸러기 원숭이형 토키몬",
+  "description": "꼬리 끝이 토큰 코인인 장난꾸러기 원숭이형 토키몬 - 상태 정의 문서 기준 개선판",
   "displaySize": 80,
-  "canvasSize": 256,
+  "frameWidth": 887,
+  "frameHeight": 887,
+  "canvasSize": 887,
+  "transparentBackground": true,
+  "identitySpec": "identity.md",
   "species": "monkey",
-  "style": "cute pixel monster, magenta/red monkey, token coin tail",
-  "sourceMapping": {
-    "1.png": "idle.png",
-    "2.png": "eat.png and excited.png",
-    "3.png": "sad.png and hungry.png",
-    "4.png": "sleepy.png and sleep.png",
-    "5.png": "walk.png; walk_right.png; walk_left.png mirrored"
-  },
+  "style": "red/magenta pixel monster monkey, token coin tail, improved state animation set",
   "sprites": {
     "idle": {
       "file": "idle.png",
-      "frames": 2,
-      "fps": 3,
+      "frames": 4,
+      "fps": 2,
       "loop": true
     },
     "eat": {
       "file": "eat.png",
-      "frames": 2,
+      "frames": 6,
       "fps": 4,
       "loop": true
     },
-    "excited": {
-      "file": "excited.png",
-      "frames": 2,
-      "fps": 4,
-      "loop": true,
-      "derivedFrom": "eat.png"
+    "attack": {
+      "file": "attack.png",
+      "frames": 6,
+      "fps": 8,
+      "loop": true
     },
     "sad": {
       "file": "sad.png",
-      "frames": 2,
-      "fps": 3,
+      "frames": 4,
+      "fps": 2,
       "loop": true
     },
     "hungry": {
       "file": "hungry.png",
-      "frames": 2,
+      "frames": 4,
       "fps": 2,
-      "loop": true,
-      "derivedFrom": "sad.png"
+      "loop": true
     },
     "sleepy": {
       "file": "sleepy.png",
-      "frames": 2,
-      "fps": 2,
+      "frames": 4,
+      "fps": 1,
       "loop": true
     },
     "sleep": {
       "file": "sleep.png",
-      "frames": 2,
-      "fps": 2,
-      "loop": true,
-      "derivedFrom": "sleepy.png"
+      "frames": 4,
+      "fps": 1,
+      "loop": true
     },
     "walk": {
       "file": "walk.png",
-      "frames": 2,
-      "fps": 4,
+      "frames": 8,
+      "fps": 8,
       "loop": true
     },
-    "walk_right": {
-      "file": "walk_right.png",
-      "frames": 2,
-      "fps": 4,
-      "loop": true,
-      "derivedFrom": "walk.png"
-    },
-    "walk_left": {
-      "file": "walk_left.png",
-      "frames": 2,
-      "fps": 4,
-      "loop": true,
-      "derivedFrom": "walk.png",
-      "mirrored": true
+    "struggle": {
+      "file": "struggle.png",
+      "frames": 6,
+      "fps": 8,
+      "loop": true
     }
   }
 }

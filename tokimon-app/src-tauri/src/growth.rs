@@ -1,6 +1,6 @@
 // 펫 성장 경계.
 //
-// 토큰 수집기(`tokepet-collector`)는 usage_events 테이블에 사용량만 적재한다.
+// 토큰 수집기(`collector` 모듈)는 usage_events 테이블에 사용량만 적재한다.
 // 펫 성장 로직은 앱이 소유한다: 새로 들어온 usage_events를 읽어 펫의
 // EXP/레벨/스탯으로 변환하고 pet_state에 저장한다. 수집기 DB와 같은 SQLite
 // 파일을 공유하되, pet_state/growth_meta 테이블은 앱이 직접 만든다.
@@ -320,7 +320,7 @@ fn save_last_event_id(conn: &Connection, id: i64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokepet_collector::Collector;
+    use crate::collector::Collector;
 
     fn open(db: &std::path::Path) -> Connection {
         Connection::open(db).unwrap()
