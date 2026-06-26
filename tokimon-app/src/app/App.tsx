@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { StarterPicker } from "../components/StarterPicker";
+import { SettingsPanel } from "../components/SettingsPanel";
 import { Wanderer } from "../components/Wanderer";
 import { loadActivePetLock, lockStarterPet } from "../domain/localProfile";
 import { findPet, type PetSpriteDef } from "../domain/petCatalog";
@@ -43,8 +45,9 @@ type CollectorSnapshot = {
   todayTokens: number;
   status: string;
   activeSourceCount: number;
+  claudeEnabled: boolean;
+  codexEnabled: boolean;
   claudeStats: ProviderStats;
-  geminiStats: ProviderStats;
   codexStats: ProviderStats;
 };
 
@@ -61,6 +64,16 @@ type TokenCollectionPanelState = {
 const TOKEN_FORMATTER = new Intl.NumberFormat("ko-KR");
 
 export function App() {
+  // The settings window loads this same bundle; render the settings UI there
+  // and skip all of the pet/collection wiring below.
+  if (isSettingsWindow()) {
+    return <SettingsPanel />;
+  }
+
+  return <PetApp />;
+}
+
+function PetApp() {
   const [state, setState] = useState<AppState>(() => getInitialState());
   const [collectionState, setCollectionState] =
     useState<TokenCollectionPanelState | null>(null);
@@ -145,8 +158,17 @@ export function App() {
     });
   };
 
+  const handleContextMenu = (event: React.MouseEvent) => {
+    // Right-click anywhere in pet mode opens the settings window.
+    if (state.phase !== "wandering") return;
+    event.preventDefault();
+    void invoke("open_settings").catch((err) =>
+      console.error("설정 창 열기 실패", err),
+    );
+  };
+
   return (
-    <>
+    <div onContextMenu={handleContextMenu} style={{ width: "100%", height: "100%" }}>
       {state.phase === "wandering" ? (
         <div
           data-tauri-drag-region
@@ -169,7 +191,7 @@ export function App() {
           onInteract={handlePetInteract}
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -214,10 +236,21 @@ function TokenCollectionPanel({
       !collector.status.toLowerCase().includes("not configured"),
   );
 
+  const startDrag = (event: React.MouseEvent) => {
+    // Left-button only; let right-click bubble up to the context-menu handler.
+    if (event.button !== 0) return;
+    event.preventDefault();
+    void getCurrentWindow()
+      .startDragging()
+      .catch((err) => console.error("창 드래그 실패", err));
+  };
+
   return (
     <div
       className="token-collection-panel"
       title={collectionTitle(state)}
+      data-tauri-drag-region
+      onMouseDown={startDrag}
     >
       <span
         className={
@@ -252,7 +285,6 @@ function collectionTitle(state: TokenCollectionPanelState | null) {
     `이벤트: ${TOKEN_FORMATTER.format(usage.eventCount)}건`,
     `Claude 오늘: ${TOKEN_FORMATTER.format(collector.claudeStats.tokensToday)} 토큰`,
     `Codex 오늘: ${TOKEN_FORMATTER.format(collector.codexStats.tokensToday)} 토큰`,
-    `Gemini 오늘: ${TOKEN_FORMATTER.format(collector.geminiStats.tokensToday)} 토큰`,
     usage.lastEventAt ? `마지막 수집: ${usage.lastEventAt}` : "마지막 수집: 없음",
   ].join("\n");
 }
@@ -262,6 +294,15 @@ function formatCompact(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
   return TOKEN_FORMATTER.format(value);
+}
+
+function isSettingsWindow(): boolean {
+  try {
+    return getCurrentWindow().label === "settings";
+  } catch {
+    // Outside Tauri (e.g. plain browser dev) there is no window label.
+    return false;
+  }
 }
 
 function getInitialState(): AppState {

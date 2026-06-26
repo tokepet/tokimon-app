@@ -42,6 +42,20 @@ body {
   backdrop-filter: blur(8px);
 }
 
+/* The whole bar is a drag handle. Children must neither capture the pointer
+   (so the mousedown target stays the drag-region element) nor allow text
+   selection (which would otherwise pre-empt the drag gesture). */
+.token-collection-panel,
+.token-collection-panel * {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+.token-collection-panel > * {
+  pointer-events: none;
+}
+
 .token-collection-panel__dot {
   flex: 0 0 auto;
   width: 6px;
@@ -177,4 +191,132 @@ body {
   font-size: 11px;
   color: #6e6e73;
   text-align: center;
+}
+
+/* ---- Settings window ---- */
+
+.settings-root {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 22px 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  background: #1c1c1e;
+  overflow-y: auto;
+}
+
+.settings-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.settings-header p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #a1a1a6;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-section h2 {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #8e8e93;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #3a3a3c;
+  border-radius: 10px;
+  background: #2c2c2e;
+  cursor: pointer;
+}
+
+.settings-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-row__label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-row__note {
+  font-size: 11px;
+  color: #8e8e93;
+}
+
+.settings-row__stat {
+  font-size: 11px;
+  color: #6e6e73;
+}
+
+.settings-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  accent-color: #35c759;
+  cursor: pointer;
+}
+
+.settings-button-row {
+  display: flex;
+  gap: 10px;
+}
+
+.settings-button {
+  appearance: none;
+  flex: 1 1 auto;
+  padding: 9px 14px;
+  border: 1px solid #3a3a3c;
+  border-radius: 9px;
+  background: #2c2c2e;
+  color: #f5f5f7;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.settings-button:hover:not(:disabled) {
+  background: #34343a;
+  border-color: #7d7dff;
+}
+
+.settings-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings-button.is-danger {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.35);
+}
+
+.settings-button.is-danger:hover:not(:disabled) {
+  background: rgba(255, 107, 107, 0.12);
+  border-color: #ff6b6b;
+}
+
+.settings-footer {
+  margin-top: auto;
+  font-size: 11px;
+  color: #6e6e73;
 }
