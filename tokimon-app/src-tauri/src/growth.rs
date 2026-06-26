@@ -331,16 +331,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("tokimon.sqlite3");
 
-        // Collector owns usage_events; seed one Gemini event via its public API.
-        let telemetry = dir.path().join("telemetry.log");
+        // Collector owns usage_events; seed one Claude event via its public API.
+        let projects_dir = dir.path().join("projects");
+        let project_dir = projects_dir.join("-home-user-work");
+        std::fs::create_dir_all(&project_dir).unwrap();
         std::fs::write(
-            &telemetry,
-            "{\"timestamp\":\"2026-05-17T14:21:00.000Z\",\"name\":\"gemini_cli.api_response\",\"attributes\":{\"model\":\"gemini-2.5-pro\",\"prompt_id\":\"p1\",\"input_token_count\":2000,\"output_token_count\":50,\"thoughts_token_count\":1000,\"tool_token_count\":500,\"total_token_count\":10000}}\n",
+            project_dir.join("session.jsonl"),
+            "{\"type\":\"assistant\",\"uuid\":\"p1\",\"sessionId\":\"s1\",\"timestamp\":\"2026-05-17T14:21:00.000Z\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5-20250929\",\"usage\":{\"input_tokens\":9000,\"output_tokens\":1000,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0}}}\n",
         )
         .unwrap();
         let collector =
-            Collector::with_sources(db.clone(), Some(telemetry), None, None).unwrap();
-        collector.poll_gemini_once().unwrap();
+            Collector::with_sources(db.clone(), Some(projects_dir), None).unwrap();
+        collector.poll_claude_once().unwrap();
 
         let conn = open(&db);
         apply_migrations(&conn).unwrap();

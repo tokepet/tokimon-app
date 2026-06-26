@@ -13,6 +13,7 @@ mod sources;
 mod store;
 
 pub use store::ProviderStats;
+// `WatchSource` is part of the public surface: the app maps settings toggles to it.
 
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use rusqlite::Connection;
@@ -50,7 +51,6 @@ impl PollResult {
 #[serde(rename_all = "camelCase")]
 pub struct PollSummary {
     pub claude: PollResult,
-    pub gemini: PollResult,
     pub codex: PollResult,
 }
 
@@ -58,23 +58,32 @@ impl PollSummary {
     pub fn empty() -> Self {
         Self {
             claude: PollResult::empty(),
-            gemini: PollResult::empty(),
             codex: PollResult::empty(),
         }
     }
 
     #[cfg(test)]
     pub fn inserted(&self) -> i64 {
-        self.claude.inserted + self.gemini.inserted + self.codex.inserted
+        self.claude.inserted + self.codex.inserted
     }
 }
 
 /// Token-usage source watched for local telemetry changes.
+///
+/// Gemini CLI is intentionally absent: its telemetry pipeline reached
+/// end-of-life, so the collector only ingests Claude Code and Codex (OpenAI).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum WatchSource {
     Claude,
-    Gemini,
     Codex,
+}
+
+/// Stable key used to persist a source's enable flag in `collector_settings`.
+fn source_key(source: WatchSource) -> &'static str {
+    match source {
+        WatchSource::Claude => "source.claude.enabled",
+        WatchSource::Codex => "source.codex.enabled",
+    }
 }
 
 /// Options for event-driven collection.
@@ -140,11 +149,11 @@ pub struct CollectorSnapshot {
     pub today_tokens: i64,
     pub status: String,
     pub active_source_count: i64,
-    pub gemini_telemetry_path: Option<String>,
     pub claude_projects_path: Option<String>,
     pub codex_sessions_path: Option<String>,
+    pub claude_enabled: bool,
+    pub codex_enabled: bool,
     pub claude_stats: ProviderStats,
-    pub gemini_stats: ProviderStats,
     pub codex_stats: ProviderStats,
 }
 
@@ -154,9 +163,12 @@ pub struct CollectorSnapshot {
 pub struct Collector {
     db_path: PathBuf,
     status: Arc<Mutex<String>>,
-    gemini_telemetry_path: Option<PathBuf>,
     claude_projects_path: Option<PathBuf>,
     codex_sessions_path: Option<PathBuf>,
+    /// Per-source enable flags. A disabled source is skipped during polling and
+    /// is not watched for filesystem changes. Persisted in `collector_settings`.
+    claude_enabled: Arc<Mutex<bool>>,
+    codex_enabled: Arc<Mutex<bool>>,
 }
 
 impl Collector {
@@ -168,7 +180,6 @@ impl Collector {
         }
         Self::with_sources(
             db_path,
-            sources::default_gemini_telemetry_path(),
             sources::default_claude_projects_path(),
             sources::default_codex_sessions_path(),
         )
@@ -178,19 +189,64 @@ impl Collector {
     /// tests and for callers that resolve paths themselves.
     pub fn with_sources(
         db_path: PathBuf,
-        gemini_telemetry_path: Option<PathBuf>,
         claude_projects_path: Option<PathBuf>,
         codex_sessions_path: Option<PathBuf>,
     ) -> Result<Self, String> {
         let handle = Self {
             db_path,
             status: Arc::new(Mutex::new("ready".to_string())),
-            gemini_telemetry_path,
             claude_projects_path,
             codex_sessions_path,
+            claude_enabled: Arc::new(Mutex::new(true)),
+            codex_enabled: Arc::new(Mutex::new(true)),
         };
         handle.initialize()?;
+        handle.load_source_flags()?;
         Ok(handle)
+    }
+
+    /// Whether a source is currently enabled for collection.
+    pub fn source_enabled(&self, source: WatchSource) -> bool {
+        *self.flag(source).lock().unwrap_or_else(|err| err.into_inner())
+    }
+
+    /// Enable or disable a source. The new value is persisted so it survives
+    /// restarts; disabled sources are skipped on the next poll. Returns whether
+    /// re-watching is needed (a source was re-enabled).
+    pub fn set_source_enabled(&self, source: WatchSource, enabled: bool) -> Result<(), String> {
+        {
+            let mut guard = self.flag(source).lock().unwrap_or_else(|err| err.into_inner());
+            *guard = enabled;
+        }
+        let conn = self.connection()?;
+        store::save_setting(&conn, source_key(source), if enabled { "1" } else { "0" })
+    }
+
+    /// Delete all collected usage events and cursors. Enable-flags are kept.
+    pub fn reset_usage(&self) -> Result<(), String> {
+        let conn = self.connection()?;
+        store::clear_usage_events(&conn)?;
+        self.set_status("ready");
+        Ok(())
+    }
+
+    fn flag(&self, source: WatchSource) -> &Arc<Mutex<bool>> {
+        match source {
+            WatchSource::Claude => &self.claude_enabled,
+            WatchSource::Codex => &self.codex_enabled,
+        }
+    }
+
+    fn load_source_flags(&self) -> Result<(), String> {
+        let conn = self.connection()?;
+        for source in [WatchSource::Claude, WatchSource::Codex] {
+            // Absent setting defaults to enabled.
+            let enabled = store::load_setting(&conn, source_key(source))?
+                .map(|value| value != "0")
+                .unwrap_or(true);
+            *self.flag(source).lock().unwrap_or_else(|err| err.into_inner()) = enabled;
+        }
+        Ok(())
     }
 
     /// Path of the SQLite database this collector writes to. Consumers can open
@@ -213,16 +269,15 @@ impl Collector {
     pub fn snapshot_for_date(&self, date: &str) -> Result<CollectorSnapshot, String> {
         let conn = self.connection()?;
         let today_tokens = store::daily_total_tokens(&conn, date)?;
+        // Only sources that are both configured and enabled count as active.
+        let claude_active = self.claude_projects_path.is_some()
+            && self.source_enabled(WatchSource::Claude);
+        let codex_active =
+            self.codex_sessions_path.is_some() && self.source_enabled(WatchSource::Codex);
         Ok(CollectorSnapshot {
             today_tokens,
             status: self.status(),
-            active_source_count: i64::from(self.gemini_telemetry_path.is_some())
-                + i64::from(self.claude_projects_path.is_some())
-                + i64::from(self.codex_sessions_path.is_some()),
-            gemini_telemetry_path: self
-                .gemini_telemetry_path
-                .as_ref()
-                .map(|path| path.to_string_lossy().to_string()),
+            active_source_count: i64::from(claude_active) + i64::from(codex_active),
             claude_projects_path: self
                 .claude_projects_path
                 .as_ref()
@@ -231,8 +286,9 @@ impl Collector {
                 .codex_sessions_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().to_string()),
+            claude_enabled: self.source_enabled(WatchSource::Claude),
+            codex_enabled: self.source_enabled(WatchSource::Codex),
             claude_stats: store::provider_stats(&conn, "claude", date)?,
-            gemini_stats: store::provider_stats(&conn, "gemini", date)?,
             codex_stats: store::provider_stats(&conn, "openai", date)?,
         })
     }
@@ -241,24 +297,14 @@ impl Collector {
     pub fn poll_all_once(&self) -> Result<PollSummary, String> {
         Ok(PollSummary {
             claude: self.poll_claude_once()?,
-            gemini: self.poll_gemini_once()?,
             codex: self.poll_codex_once()?,
         })
     }
 
-    pub fn poll_gemini_once(&self) -> Result<PollResult, String> {
-        let Some(path) = &self.gemini_telemetry_path else {
-            self.set_status("Gemini telemetry path not configured");
-            return Ok(PollResult {
-                inserted: 0,
-                duplicates: 0,
-                cursor: 0,
-            });
-        };
-        self.poll_gemini_path_once(path)
-    }
-
     pub fn poll_claude_once(&self) -> Result<PollResult, String> {
+        if !self.source_enabled(WatchSource::Claude) {
+            return Ok(PollResult::empty());
+        }
         let Some(projects_path) = &self.claude_projects_path else {
             self.set_status("Claude projects path not configured");
             return Ok(PollResult {
@@ -271,6 +317,9 @@ impl Collector {
     }
 
     pub fn poll_codex_once(&self) -> Result<PollResult, String> {
+        if !self.source_enabled(WatchSource::Codex) {
+            return Ok(PollResult::empty());
+        }
         let Some(sessions_path) = &self.codex_sessions_path else {
             self.set_status("Codex sessions path not configured");
             return Ok(PollResult {
@@ -291,12 +340,6 @@ impl Collector {
         let options = options.normalized();
         let (tx, rx) = mpsc::channel();
         let mut watchers = Vec::new();
-
-        if let Some(path) = &self.gemini_telemetry_path {
-            if let Some(watcher) = watch_source_path(WatchSource::Gemini, path, false, &tx)? {
-                watchers.push(watcher);
-            }
-        }
 
         if let Some(path) = &self.claude_projects_path {
             if let Some(watcher) = watch_source_path(WatchSource::Claude, path, true, &tx)? {
@@ -426,51 +469,6 @@ impl Collector {
         })
     }
 
-    fn poll_gemini_path_once(&self, path: &Path) -> Result<PollResult, String> {
-        let conn = self.connection()?;
-        let mut cursor = store::load_cursor(&conn, "gemini", path)?;
-        let content = match fs::read_to_string(path) {
-            Ok(content) => content,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                self.set_status("Gemini telemetry file not found");
-                return Ok(PollResult {
-                    inserted: 0,
-                    duplicates: 0,
-                    cursor,
-                });
-            }
-            Err(error) => return Err(error.to_string()),
-        };
-
-        let content_len = content.len() as i64;
-        if cursor > content_len {
-            cursor = 0;
-        }
-        let unread = content.get(cursor as usize..).unwrap_or_default();
-        let events = sources::parse_gemini_telemetry_events(unread);
-        let mut inserted = 0;
-        let mut duplicates = 0;
-
-        for event in events {
-            if store::insert_usage_event(&conn, &event)? {
-                inserted += 1;
-            } else {
-                duplicates += 1;
-            }
-        }
-
-        store::save_cursor(&conn, "gemini", path, content_len)?;
-        self.set_status(format!(
-            "Gemini watcher: {inserted} new event(s), {duplicates} duplicate(s)"
-        ));
-
-        Ok(PollResult {
-            inserted,
-            duplicates,
-            cursor: content_len,
-        })
-    }
-
     fn connection(&self) -> Result<Connection, String> {
         Connection::open(&self.db_path).map_err(|error| error.to_string())
     }
@@ -576,7 +574,7 @@ fn run_watch_worker<F>(
 
 fn poll_sources(collector: &Collector, sources: &[WatchSource]) -> Result<PollSummary, String> {
     let sources: BTreeSet<_> = sources.iter().copied().collect();
-    if sources.len() == 3 {
+    if sources.len() == 2 {
         return collector.poll_all_once();
     }
 
@@ -584,7 +582,6 @@ fn poll_sources(collector: &Collector, sources: &[WatchSource]) -> Result<PollSu
     for source in sources {
         match source {
             WatchSource::Claude => summary.claude = collector.poll_claude_once()?,
-            WatchSource::Gemini => summary.gemini = collector.poll_gemini_once()?,
             WatchSource::Codex => summary.codex = collector.poll_codex_once()?,
         }
     }
@@ -643,23 +640,6 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    fn api_response(prompt_id: &str, total_tokens: i64) -> String {
-        serde_json::json!({
-            "timestamp": "2026-05-17T14:21:00.000Z",
-            "name": "gemini_cli.api_response",
-            "attributes": {
-                "model": "gemini-2.5-pro",
-                "prompt_id": prompt_id,
-                "input_token_count": 1000,
-                "output_token_count": 50,
-                "thoughts_token_count": 500,
-                "tool_token_count": 500,
-                "total_token_count": total_tokens
-            }
-        })
-        .to_string()
-    }
-
     fn claude_assistant_message(uuid: &str, input_tokens: i64, output_tokens: i64) -> String {
         serde_json::json!({
             "type": "assistant",
@@ -684,7 +664,7 @@ mod tests {
     fn initializes_sqlite() {
         let dir = tempdir().unwrap();
         let collector =
-            Collector::with_sources(dir.path().join("tokepet.sqlite3"), None, None, None).unwrap();
+            Collector::with_sources(dir.path().join("tokepet.sqlite3"), None, None).unwrap();
 
         let snapshot = collector.snapshot_for_date("2026-05-17").unwrap();
 
@@ -694,61 +674,76 @@ mod tests {
     }
 
     #[test]
-    fn polls_gemini_file_persists_usage_and_cursor() {
-        let dir = tempdir().unwrap();
-        let telemetry = dir.path().join("telemetry.log");
-        fs::write(
-            &telemetry,
-            format!("{}\n", api_response("prompt-1", 10_000)),
-        )
-        .unwrap();
-        let collector = Collector::with_sources(
-            dir.path().join("tokepet.sqlite3"),
-            Some(telemetry.clone()),
-            None,
-            None,
-        )
-        .unwrap();
-
-        let first = collector.poll_gemini_once().unwrap();
-        let second = collector.poll_gemini_once().unwrap();
-        let snapshot = collector.snapshot_for_date("2026-05-17").unwrap();
-
-        assert_eq!(first.inserted, 1);
-        assert_eq!(first.duplicates, 0);
-        assert_eq!(
-            first.cursor,
-            fs::read_to_string(&telemetry).unwrap().len() as i64
-        );
-        assert_eq!(second.inserted, 0);
-        assert_eq!(snapshot.today_tokens, 10_000);
-        assert_eq!(snapshot.gemini_stats.events_today, 1);
-        assert_eq!(
-            snapshot.gemini_stats.last_event_at.as_deref(),
-            Some("2026-05-17T14:21:00.000Z")
-        );
-    }
-
-    #[test]
     fn poll_recovers_after_log_rotation() {
         let dir = tempdir().unwrap();
-        let telemetry = dir.path().join("telemetry.log");
-        fs::write(&telemetry, format!("{}\n", api_response("before", 400))).unwrap();
+        let projects_dir = dir.path().join("projects");
+        let project_dir = projects_dir.join("-home-user-work");
+        fs::create_dir_all(&project_dir).unwrap();
+        let transcript = project_dir.join("session.jsonl");
+        fs::write(
+            &transcript,
+            format!("{}\n", claude_assistant_message("before", 400, 0)),
+        )
+        .unwrap();
         let collector = Collector::with_sources(
             dir.path().join("tokepet.sqlite3"),
-            Some(telemetry.clone()),
-            None,
+            Some(projects_dir.clone()),
             None,
         )
         .unwrap();
-        collector.poll_gemini_once().unwrap();
+        let first = collector.poll_claude_once().unwrap();
+        assert_eq!(first.inserted, 1);
 
-        fs::write(&telemetry, format!("{}\n", api_response("after", 600))).unwrap();
-        let result = collector.poll_gemini_once().unwrap();
+        // Rotate the transcript to a *shorter* file. The saved cursor now sits
+        // past EOF; the poller must reset it to 0 and re-read from the start,
+        // ingesting the new (distinct-uuid) event rather than skipping it.
+        fs::write(&transcript, format!("{}\n", claude_assistant_message("x", 60, 0))).unwrap();
+        let result = collector.poll_claude_once().unwrap();
         let snapshot = collector.snapshot_for_date("2026-05-17").unwrap();
 
         assert_eq!(result.inserted, 1);
-        assert_eq!(snapshot.today_tokens, 1_000);
+        // The helper adds 1000 fixed cache tokens per message: 1400 + 1060.
+        assert_eq!(snapshot.today_tokens, 2_460);
+    }
+
+    #[test]
+    fn disabled_source_is_skipped() {
+        let dir = tempdir().unwrap();
+        let projects_dir = dir.path().join("projects");
+        let project_dir = projects_dir.join("-home-user-work");
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::write(
+            project_dir.join("session.jsonl"),
+            format!("{}\n", claude_assistant_message("assistant-1", 1_000, 0)),
+        )
+        .unwrap();
+        let collector = Collector::with_sources(
+            dir.path().join("tokepet.sqlite3"),
+            Some(projects_dir),
+            None,
+        )
+        .unwrap();
+
+        collector
+            .set_source_enabled(WatchSource::Claude, false)
+            .unwrap();
+        assert!(!collector.source_enabled(WatchSource::Claude));
+        assert_eq!(collector.poll_claude_once().unwrap().inserted, 0);
+        assert_eq!(collector.snapshot_for_date("2026-05-17").unwrap().today_tokens, 0);
+
+        // Re-enabling lets the same poll ingest the pending event, and the flag
+        // is persisted so a fresh handle on the same DB sees it enabled.
+        collector
+            .set_source_enabled(WatchSource::Claude, true)
+            .unwrap();
+        assert_eq!(collector.poll_claude_once().unwrap().inserted, 1);
+        let reopened = Collector::with_sources(
+            collector.db_path().to_path_buf(),
+            Some(dir.path().join("projects")),
+            None,
+        )
+        .unwrap();
+        assert!(reopened.source_enabled(WatchSource::Claude));
     }
 
     #[test]
@@ -765,7 +760,6 @@ mod tests {
         .unwrap();
         let collector = Collector::with_sources(
             dir.path().join("tokepet.sqlite3"),
-            None,
             Some(projects_dir.clone()),
             None,
         )
@@ -928,7 +922,6 @@ mod tests {
         let collector = Collector::with_sources(
             dir.path().join("tokepet.sqlite3"),
             None,
-            None,
             Some(sessions_dir.clone()),
         )
         .unwrap();
@@ -953,20 +946,24 @@ mod tests {
     #[test]
     fn poll_all_once_aggregates_inserted() {
         let dir = tempdir().unwrap();
-        let telemetry = dir.path().join("telemetry.log");
-        fs::write(&telemetry, format!("{}\n", api_response("prompt-1", 5_000))).unwrap();
+        let projects_dir = dir.path().join("projects");
+        let project_dir = projects_dir.join("-home-user-work");
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::write(
+            project_dir.join("session.jsonl"),
+            format!("{}\n", claude_assistant_message("assistant-1", 5_000, 0)),
+        )
+        .unwrap();
         let collector = Collector::with_sources(
             dir.path().join("tokepet.sqlite3"),
-            Some(telemetry),
-            None,
+            Some(projects_dir),
             None,
         )
         .unwrap();
 
         let summary = collector.poll_all_once().unwrap();
         assert_eq!(summary.inserted(), 1);
-        assert_eq!(summary.gemini.inserted, 1);
-        assert_eq!(summary.claude.inserted, 0);
+        assert_eq!(summary.claude.inserted, 1);
         assert_eq!(summary.codex.inserted, 0);
     }
 
@@ -975,13 +972,13 @@ mod tests {
         let mut batch = DebouncedSources::new(Duration::from_millis(300));
         let start = Instant::now();
 
-        batch.push(WatchSource::Gemini, start);
-        batch.push(WatchSource::Gemini, start + Duration::from_millis(100));
+        batch.push(WatchSource::Claude, start);
+        batch.push(WatchSource::Claude, start + Duration::from_millis(100));
 
         assert!(batch.take_due(start + Duration::from_millis(399)).is_none());
         assert_eq!(
             batch.take_due(start + Duration::from_millis(400)),
-            Some(vec![WatchSource::Gemini])
+            Some(vec![WatchSource::Claude])
         );
         assert!(batch.take_due(start + Duration::from_millis(500)).is_none());
     }

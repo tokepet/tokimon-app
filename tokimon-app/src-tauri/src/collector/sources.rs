@@ -16,65 +16,10 @@ pub fn default_claude_projects_path() -> Option<PathBuf> {
         .or_else(|| dirs::home_dir().map(|home| home.join(".claude").join("projects")))
 }
 
-pub fn default_gemini_telemetry_path() -> Option<PathBuf> {
-    std::env::var_os("GEMINI_TELEMETRY_OUTFILE")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".gemini").join("telemetry.log")))
-}
-
 pub fn default_codex_sessions_path() -> Option<PathBuf> {
     std::env::var_os("CODEX_SESSIONS_DIR")
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("sessions")))
-}
-
-// ---------------------------------------------------------------------------
-// Gemini telemetry
-// ---------------------------------------------------------------------------
-
-pub fn parse_gemini_telemetry_events(content: &str) -> Vec<UsageEvent> {
-    content
-        .lines()
-        .filter_map(parse_gemini_telemetry_line)
-        .collect()
-}
-
-fn parse_gemini_telemetry_line(line: &str) -> Option<UsageEvent> {
-    let value: Value = serde_json::from_str(line).ok()?;
-    if value.get("name")?.as_str()? != "gemini_cli.api_response" {
-        return None;
-    }
-    let attributes = value.get("attributes")?;
-    let timestamp = value
-        .get("timestamp")
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
-        .unwrap_or_else(now_utc_timestamp);
-    let model = attributes
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_string();
-    Some(UsageEvent {
-        provider: "gemini".to_string(),
-        tool: "gemini-cli".to_string(),
-        model,
-        timestamp,
-        session_id: None,
-        prompt_id: attributes
-            .get("prompt_id")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        input_tokens: json_i64(attributes, "input_token_count"),
-        output_tokens: json_i64(attributes, "output_token_count"),
-        cached_input_tokens: json_i64(attributes, "cached_content_token_count"),
-        cache_creation_tokens: 0,
-        reasoning_tokens: 0,
-        thoughts_tokens: json_i64(attributes, "thoughts_token_count"),
-        tool_tokens: json_i64(attributes, "tool_token_count"),
-        total_tokens: json_i64(attributes, "total_token_count"),
-        source_type: "telemetry_file".to_string(),
-    })
 }
 
 // ---------------------------------------------------------------------------
