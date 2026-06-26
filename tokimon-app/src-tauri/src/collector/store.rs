@@ -65,6 +65,11 @@ pub fn apply_migrations(conn: &Connection) -> Result<(), String> {
             updated_at TEXT NOT NULL,
             PRIMARY KEY (source, path)
         );
+        CREATE TABLE IF NOT EXISTS collector_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         INSERT OR IGNORE INTO schema_migrations (version, applied_at)
             VALUES ({SCHEMA_VERSION}, CURRENT_TIMESTAMP);
         "#
@@ -139,6 +144,39 @@ pub fn provider_stats(
         tokens_today,
         last_event_at,
     })
+}
+
+/// Read a collector setting. Returns `None` when the key has never been set.
+pub fn load_setting(conn: &Connection, key: &str) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT value FROM collector_settings WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+
+/// Write a collector setting, overwriting any existing value.
+pub fn save_setting(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO collector_settings (key, value, updated_at)
+         VALUES (?1, ?2, CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        params![key, value],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Delete all collected usage events and per-file cursors so collection starts
+/// fresh. Settings are preserved.
+pub fn clear_usage_events(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "DELETE FROM usage_events;
+         DELETE FROM collector_cursors;",
+    )
+    .map_err(|error| error.to_string())
 }
 
 pub fn load_cursor(conn: &Connection, source: &str, path: &Path) -> Result<i64, String> {

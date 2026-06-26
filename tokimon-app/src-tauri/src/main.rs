@@ -7,7 +7,9 @@ mod tray;
 
 use std::{sync::Mutex, time::Duration};
 
-use collector::{Collector, CollectorSnapshot, CollectorWatch, PollSummary, WatchOptions};
+use collector::{
+    Collector, CollectorSnapshot, CollectorWatch, PollSummary, WatchOptions, WatchSource,
+};
 use commands::window_control;
 use growth::{PetState, StarterSpecies};
 use rusqlite::Connection;
@@ -110,6 +112,74 @@ fn poll_now(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<PollSum
     poll_and_feed(&app, &state.collector)
 }
 
+/// Enable or disable a collection source ("claude" or "codex"). The choice is
+/// persisted and takes effect on the next poll.
+#[tauri::command]
+fn set_source_enabled(
+    state: State<'_, AppState>,
+    source: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let source = parse_source(&source)?;
+    state.collector.set_source_enabled(source, enabled)
+}
+
+/// Wipe all collected usage events and cursors so collection starts fresh.
+/// Pet growth state is left untouched.
+#[tauri::command]
+fn reset_collected_data(state: State<'_, AppState>) -> Result<(), String> {
+    state.collector.reset_usage()
+}
+
+/// Open (or focus) the settings window. It loads the same frontend bundle; the
+/// React app renders the settings UI when it detects the "settings" label.
+#[tauri::command]
+fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let window = WebviewWindowBuilder::new(
+        &app,
+        "settings",
+        WebviewUrl::App("index.html".into()),
+    )
+    .title("토키몬 설정")
+    .inner_size(420.0, 460.0)
+    .resizable(false)
+    .center()
+    .build()
+    .map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Drop the main window back into starter selection by clearing its locked pet
+/// (stored in the main window's localStorage) and reloading it.
+#[tauri::command]
+fn reset_starter_selection(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main 창을 찾을 수 없습니다".to_string())?;
+    window
+        .eval("window.localStorage.removeItem('tokimon.localProfile.v1'); window.location.reload();")
+        .map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn parse_source(source: &str) -> Result<WatchSource, String> {
+    match source {
+        "claude" => Ok(WatchSource::Claude),
+        "codex" => Ok(WatchSource::Codex),
+        other => Err(format!("알 수 없는 수집 소스: {other}")),
+    }
+}
+
 fn poll_and_feed(app: &tauri::AppHandle, collector: &Collector) -> Result<PollSummary, String> {
     let summary = collector.poll_all_once()?;
     feed_new_usage(app, collector)?;
@@ -137,6 +207,10 @@ fn main() {
             token_usage,
             select_starter,
             poll_now,
+            set_source_enabled,
+            reset_collected_data,
+            open_settings,
+            reset_starter_selection,
         ])
         .setup(|app| {
             // 펫 선택 팝업: 화면 중앙, macOS 기본 데코레이션, 고정 크기
